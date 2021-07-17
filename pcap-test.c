@@ -1,9 +1,7 @@
-#include <pcap.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <libnet.h> // if <libnet.h> doesn't work, try "libnet-headers.h" located inside current directory
-//#include "libnet-headers.h"
+#include <pcap.h>
+#include <libnet.h>
 
 void usage() {
 	printf("syntax: pcap-test <interface>\n");
@@ -27,6 +25,21 @@ bool parse(Param* param, int argc, char* argv[]) {
 	return true;
 }
 
+void print_mac(const char* str_hdr, uint8_t *ether_addr) {
+	printf("%s%02x-%02x-%02x-%02x-%02x-%02x\n", str_hdr, ether_addr[0], ether_addr[1], ether_addr[2], ether_addr[3], ether_addr[4], ether_addr[5]);
+}
+
+void print_ip(const char* str_hdr, uint32_t ip_addr) {
+	printf("%s%ld.%ld.%ld.%ld\n", str_hdr, (ip_addr & 0x00000000FFUL), (ip_addr & 0x0000ff00UL)>>8, (ip_addr & 0x00ff0000UL)>>16, (ip_addr & 0xff000000UL)>>24);
+}
+
+void print_payload(const u_char *payload, int len) {
+	printf("Payload (len = %d): ", len);
+	for (int i = 0; i<(len>8 ? 8 : len); i++)
+		printf(" %02x", *(payload+i));
+	printf("\n");
+}
+
 void read_pkt(pcap_t* pcap) {
 	pcap_pkthdr* header;
 	const u_char* packet;
@@ -37,17 +50,17 @@ void read_pkt(pcap_t* pcap) {
 		exit(-1);
 	}
 
+	printf("=========================================\n");
+	printf("(%u bytes captured)\n", header->caplen);
+	
 	libnet_ethernet_hdr *eth_hdr = (libnet_ethernet_hdr*) packet;
-	printf("src mac: %02x-%02x-%02x-%02x-%02x-%02x\n", eth_hdr->ether_shost[0], eth_hdr->ether_shost[1], eth_hdr->ether_shost[2], eth_hdr->ether_shost[3], eth_hdr->ether_shost[4], eth_hdr->ether_shost[5]);
-	printf("dst mac: %02x-%02x-%02x-%02x-%02x-%02x\n", eth_hdr->ether_dhost[0], eth_hdr->ether_dhost[1], eth_hdr->ether_dhost[2], eth_hdr->ether_dhost[3], eth_hdr->ether_dhost[4], eth_hdr->ether_dhost[5]);
+	print_mac("src mac: ", eth_hdr->ether_shost);
+	print_mac("dst mac: ", eth_hdr->ether_dhost);
 
 	if (ntohs(eth_hdr->ether_type) == ETHERTYPE_IP){
 		libnet_ipv4_hdr *ipv4_hdr = (libnet_ipv4_hdr*) (packet + sizeof(libnet_ethernet_hdr));
-		uint32_t src_ipv4 = ipv4_hdr->ip_src.s_addr;
-		uint32_t dst_ipv4 = ipv4_hdr->ip_dst.s_addr;
-		printf("src ip: %ld.%ld.%ld.%ld\n", (src_ipv4 & 0x00000000FFUL), (src_ipv4 & 0x0000ff00UL)>>8, (src_ipv4 & 0x00ff0000UL)>>16, (src_ipv4 & 0xff000000UL)>>24);
-		printf("dst ip: %ld.%ld.%ld.%ld\n", (dst_ipv4 & 0x00000000FFUL), (dst_ipv4 & 0x0000ff00UL)>>8, (dst_ipv4 & 0x00ff0000UL)>>16, (dst_ipv4 & 0xff000000UL)>>24);
-
+		print_ip("src ip: ", ipv4_hdr->ip_src.s_addr);
+		print_ip("dst ip: ", ipv4_hdr->ip_dst.s_addr);
 
 		if (ipv4_hdr->ip_p == IPPROTO_TCP) {
 			libnet_tcp_hdr *tcp_hdr = (libnet_tcp_hdr*) (packet + sizeof(libnet_ethernet_hdr) + sizeof(libnet_ipv4_hdr));
@@ -55,25 +68,17 @@ void read_pkt(pcap_t* pcap) {
 			printf("dst port: %d\n", ntohs(tcp_hdr->th_dport));
 
 			const u_char *payload = (u_char *)(packet + sizeof(libnet_ethernet_hdr) + sizeof(libnet_ipv4_hdr) + sizeof(libnet_tcp_hdr));
-			printf("Payload: 0x");
-			for (int i = 0; i<8; i++) {
-				printf("%02x", *(payload+i));
-			}
-			printf("\n");		
-			//printf("Payload: 0x%x%x\n", *payload, *(payload+1);
+			int len = ntohs(ipv4_hdr->ip_len) - ipv4_hdr->ip_hl * 4 - sizeof(libnet_tcp_hdr);
+			print_payload(payload, len);
 		}
 		else
-			printf("non-TCP packet\n");
+			printf(">> non-TCP packet!\n");
 	}
 	else
-		printf("non-IPv4 packet\n");
+		printf(">> non-IPv4 packet!\n");
 	
-	printf("(%u bytes captured)\n", header->caplen);
-	printf("=========================================\n");
 	return;
 }
-
-
 
 int main(int argc, char* argv[]) {
 	if (!parse(&param, argc, argv))
@@ -89,5 +94,7 @@ int main(int argc, char* argv[]) {
 	while (true) {
 		read_pkt(pcap);
 	}
+
 	pcap_close(pcap);
+	return 0;
 }
